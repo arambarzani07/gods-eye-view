@@ -44,6 +44,25 @@ jobs:
       - name: Build web app
         run: npm run build
 
+      - name: Trace asset URL guards
+        run: |
+          echo '=== exact error text ==='
+          grep -RIn --binary-files=without-match \
+            --exclude='*.map' \
+            --exclude-dir='.git' \
+            'Asset source requires an explicit HTTP(S) directory URL' \
+            src build node_modules dist || true
+          echo '=== related asset resolver code ==='
+          grep -RIn --binary-files=without-match \
+            --exclude='*.map' \
+            --exclude-dir='.git' \
+            -E 'resolveAsset|assetSource|asset source|directory URL|CESIUM_BASE_URL' \
+            src build node_modules dist | head -300 || true
+          echo '=== built Cesium base references ==='
+          grep -RIn --binary-files=without-match \
+            --exclude='*.map' \
+            -E 'Cesium|Assets|Workers|ThirdParty|Widgets' dist | head -300 || true
+
       - name: Create Capacitor configuration
         run: |
           cat > capacitor.config.json <<'JSON'
@@ -56,6 +75,7 @@ jobs:
               "preferredContentMode": "mobile"
             },
             "server": {
+              "hostname": "localhost",
               "iosScheme": "https",
               "cleartext": true
             }
@@ -67,6 +87,18 @@ jobs:
 
       - name: Sync web assets into iOS
         run: npx cap sync ios
+
+      - name: Verify native web origin and bundled assets
+        run: |
+          echo '=== Capacitor config ==='
+          cat capacitor.config.json
+          echo '=== bundled web root ==='
+          find ios/App/App/public -maxdepth 2 -type f | sort | head -200
+          test -f ios/App/App/public/index.html
+          grep -RIn --binary-files=without-match \
+            --exclude='*.map' \
+            'Asset source requires an explicit HTTP(S) directory URL' \
+            ios/App/App/public || true
 
       - name: Configure iOS permissions and bundle metadata
         run: |
@@ -118,7 +150,7 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ios-v0.1.2
+          RELEASE_TAG: ios-v0.1.3
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" \
@@ -130,6 +162,6 @@ jobs:
               GodsEyeView-unsigned.ipa \
               GodsEyeView-unsigned.ipa.sha256 \
               --target "$GITHUB_SHA" \
-              --title "Gods Eye View iOS v0.1.2" \
-              --notes "Unsigned iOS IPA build for sideloading/signing. Fixes native asset loading by using an HTTPS Capacitor origin. Built automatically from the main branch with Capacitor and Xcode."
+              --title "Gods Eye View iOS v0.1.3" \
+              --notes "Unsigned iOS IPA diagnostic build. Pins the Capacitor origin to https://localhost and traces the native asset URL guard so the startup failure can be corrected at its source."
           fi
