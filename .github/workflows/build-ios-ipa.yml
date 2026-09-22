@@ -1,5 +1,6 @@
 name: Build iOS IPA
 
+# Produces a sideloadable unsigned IPA on every relevant main-branch change.
 on:
   workflow_dispatch:
   push:
