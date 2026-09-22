@@ -1,0 +1,112 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-ios-ipa.yml'
+      - 'src/**'
+      - 'public/**'
+      - 'index.html'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.config.*'
+      - 'build/**'
+
+permissions:
+  contents: read
+
+jobs:
+  build-ipa:
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.14.0'
+          cache: npm
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Install Capacitor toolchain
+        run: npm install --no-save @capacitor/core@7 @capacitor/cli@7 @capacitor/ios@7
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Create Capacitor configuration
+        run: |
+          cat > capacitor.config.json <<'JSON'
+          {
+            "appId": "com.aram.godseyeview",
+            "appName": "Gods Eye View",
+            "webDir": "dist",
+            "ios": {
+              "contentInset": "automatic",
+              "preferredContentMode": "mobile"
+            },
+            "server": {
+              "iosScheme": "capacitor",
+              "cleartext": true
+            }
+          }
+          JSON
+
+      - name: Generate iOS project
+        run: npx cap add ios
+
+      - name: Sync web assets into iOS
+        run: npx cap sync ios
+
+      - name: Configure iOS permissions and bundle metadata
+        run: |
+          PLIST="ios/App/App/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string Voice control requires microphone access." "$PLIST" || \
+            /usr/libexec/PlistBuddy -c "Set :NSMicrophoneUsageDescription Voice control requires microphone access." "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :NSLocationWhenInUseUsageDescription string Location access improves map context and nearby results." "$PLIST" || \
+            /usr/libexec/PlistBuddy -c "Set :NSLocationWhenInUseUsageDescription Location access improves map context and nearby results." "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST" || \
+            /usr/libexec/PlistBuddy -c "Set :ITSAppUsesNonExemptEncryption false" "$PLIST"
+
+      - name: Build unsigned iOS app
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -workspace ios/App/App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            clean build | tee build/xcodebuild.log
+
+      - name: Package unsigned IPA
+        run: |
+          APP_PATH="build/DerivedData/Build/Products/Release-iphoneos/App.app"
+          test -d "$APP_PATH"
+          rm -rf Payload GodsEyeView-unsigned.ipa
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          ditto -c -k --sequesterRsrc --keepParent Payload GodsEyeView-unsigned.ipa
+          shasum -a 256 GodsEyeView-unsigned.ipa > GodsEyeView-unsigned.ipa.sha256
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: GodsEyeView-iOS-unsigned
+          path: |
+            GodsEyeView-unsigned.ipa
+            GodsEyeView-unsigned.ipa.sha256
+            build/xcodebuild.log
+          if-no-files-found: error
+          retention-days: 30
