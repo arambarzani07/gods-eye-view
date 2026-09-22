@@ -18,7 +18,7 @@ on:
       - 'build/**'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-ipa:
@@ -103,7 +103,7 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent Payload GodsEyeView-unsigned.ipa
           shasum -a 256 GodsEyeView-unsigned.ipa > GodsEyeView-unsigned.ipa.sha256
 
-      - name: Upload IPA
+      - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: GodsEyeView-iOS-unsigned
@@ -113,3 +113,23 @@ jobs:
             build/xcodebuild.log
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish GitHub Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ios-v0.1.1
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" \
+              GodsEyeView-unsigned.ipa \
+              GodsEyeView-unsigned.ipa.sha256 \
+              --clobber
+          else
+            gh release create "$RELEASE_TAG" \
+              GodsEyeView-unsigned.ipa \
+              GodsEyeView-unsigned.ipa.sha256 \
+              --target "$GITHUB_SHA" \
+              --title "Gods Eye View iOS v0.1.1" \
+              --notes "Unsigned iOS IPA build for sideloading/signing. Built automatically from the main branch with Capacitor and Xcode."
+          fi
